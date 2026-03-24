@@ -150,7 +150,7 @@ export function BatchPage() {
           <div className={cs.emptyState}>
             <div className={cs.emptyIcon}>{"\u{1F512}"}</div>
             <p>Connect your wallet to execute batch operations</p>
-            <button className={`${cs.btn} ${cs.btnPrimary}`} onClick={wallet.connect} style={{ marginTop: 16 }}>
+            <button className={`${cs.btn} ${cs.btnPrimary}`} onClick={() => wallet.connect()} style={{ marginTop: 16 }}>
               Connect Wallet
             </button>
           </div>

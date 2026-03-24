@@ -3,26 +3,36 @@ import {
   useContext,
   useState,
   useCallback,
+  useEffect,
+  useRef,
   type ReactNode,
 } from "react";
 import { BrowserProvider, JsonRpcSigner, formatEther } from "ethers";
 import { CHAIN_HEX, INTUITION_CHAIN } from "@/config/constants";
 import { createElement } from "react";
 
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: {
-        method: string;
-        params?: unknown[];
-      }) => Promise<unknown>;
-      on: (event: string, handler: (...args: unknown[]) => void) => void;
-      removeListener: (
-        event: string,
-        handler: (...args: unknown[]) => void
-      ) => void;
-    };
-  }
+// EIP-6963: Multi-wallet discovery
+interface EIP6963ProviderInfo {
+  uuid: string;
+  name: string;
+  icon: string;
+  rdns: string;
+}
+
+interface EIP6963ProviderDetail {
+  info: EIP6963ProviderInfo;
+  provider: EIP1193Provider;
+}
+
+interface EIP1193Provider {
+  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  on?: (event: string, handler: (...args: unknown[]) => void) => void;
+}
+
+interface WalletOption {
+  name: string;
+  icon: string;
+  provider: EIP1193Provider;
 }
 
 interface WalletState {
@@ -32,7 +42,8 @@ interface WalletState {
   connected: boolean;
   connecting: boolean;
   error: string | null;
-  connect: () => Promise<void>;
+  wallets: WalletOption[];
+  connect: (provider?: EIP1193Provider) => Promise<void>;
   disconnect: () => void;
 }
 
@@ -45,26 +56,58 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [wallets, setWallets] = useState<WalletOption[]>([]);
+  const discoveredRef = useRef<Map<string, EIP6963ProviderDetail>>(new Map());
 
-  const connect = useCallback(async () => {
-    if (!window.ethereum) {
-      setError("MetaMask not detected");
+  // EIP-6963: listen for wallet announcements
+  useEffect(() => {
+    function handleAnnounce(event: Event) {
+      const detail = (event as CustomEvent<EIP6963ProviderDetail>).detail;
+      if (!detail?.info?.uuid) return;
+      discoveredRef.current.set(detail.info.uuid, detail);
+      setWallets(
+        Array.from(discoveredRef.current.values()).map((d) => ({
+          name: d.info.name,
+          icon: d.info.icon,
+          provider: d.provider,
+        }))
+      );
+    }
+
+    window.addEventListener("eip6963:announceProvider", handleAnnounce);
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+
+    return () => {
+      window.removeEventListener("eip6963:announceProvider", handleAnnounce);
+    };
+  }, []);
+
+  const connect = useCallback(async (explicitProvider?: EIP1193Provider) => {
+    // Priority: explicit provider > first discovered wallet > window.ethereum
+    const provider =
+      explicitProvider ??
+      discoveredRef.current.values().next().value?.provider ??
+      (window as { ethereum?: EIP1193Provider }).ethereum;
+
+    if (!provider) {
+      setError("No wallet detected. Install MetaMask.");
       return;
     }
+
     setConnecting(true);
     setError(null);
     try {
-      const provider = new BrowserProvider(window.ethereum);
-      await provider.send("eth_requestAccounts", []);
+      const ethersProvider = new BrowserProvider(provider);
+      await ethersProvider.send("eth_requestAccounts", []);
 
       try {
-        await window.ethereum.request({
+        await provider.request({
           method: "wallet_switchEthereumChain",
           params: [{ chainId: CHAIN_HEX }],
         });
       } catch (e: unknown) {
         if ((e as { code?: number }).code === 4902) {
-          await window.ethereum.request({
+          await provider.request({
             method: "wallet_addEthereumChain",
             params: [INTUITION_CHAIN],
           });
@@ -73,7 +116,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      const freshProvider = new BrowserProvider(window.ethereum);
+      // Re-create provider after chain switch
+      const freshProvider = new BrowserProvider(provider);
       freshProvider.pollingInterval = 30000;
       const s = await freshProvider.getSigner();
       const addr = await s.getAddress();
@@ -108,6 +152,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         connected,
         connecting,
         error,
+        wallets,
         connect,
         disconnect,
       },
