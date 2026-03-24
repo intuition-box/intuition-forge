@@ -135,8 +135,14 @@ MULTIVAULT_ABI = [
 
 class RpcService:
     def __init__(self):
-        self._read_w3 = Web3(Web3.HTTPProvider(settings.rpc_read_url))
-        self._write_w3 = Web3(Web3.HTTPProvider(settings.rpc_url))
+        self._read_w3 = Web3(Web3.HTTPProvider(
+            settings.rpc_read_url,
+            request_kwargs={"timeout": 15},
+        ))
+        self._write_w3 = Web3(Web3.HTTPProvider(
+            settings.rpc_url,
+            request_kwargs={"timeout": 15},
+        ))
         self._contract: Contract = self._read_w3.eth.contract(
             address=Web3.to_checksum_address(settings.multivault_address),
             abi=MULTIVAULT_ABI,
