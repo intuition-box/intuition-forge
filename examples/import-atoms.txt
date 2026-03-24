@@ -1,0 +1,8 @@
+Ethereum | Decentralized blockchain platform
+Vitalik Buterin | Co-founder of Ethereum
+DeFi | Decentralized Finance
+Uniswap | Decentralized exchange protocol
+Layer 2s | Ethereum Layer 2 scaling solutions
+AI Agents | Autonomous AI agents in Web3
+Solidity | Smart contract programming language
+EthCC | Ethereum Community Conference

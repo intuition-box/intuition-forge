@@ -1,0 +1,18 @@
+[
+  {
+    "subject_id": "0x<atom-id-of-uniswap>",
+    "predicate_id": "0x7ec36d201c842dc787b45cb5bb753bea4cf849be3908fb1b0a7d067c3c3cc1f5",
+    "object_id": "0x<atom-id-of-defi>",
+    "subject_label": "Uniswap",
+    "predicate_label": "has tag",
+    "object_label": "DeFi"
+  },
+  {
+    "subject_id": "0x<atom-id-of-vitalik>",
+    "predicate_id": "0xddbdcf95cfac2135b0dfbfa055952b839ce5ee0467a5729eb15f9df250d3cf37",
+    "object_id": "0x<atom-id-of-ethcc>",
+    "subject_label": "Vitalik Buterin",
+    "predicate_label": "speaking at",
+    "object_label": "EthCC"
+  }
+]
