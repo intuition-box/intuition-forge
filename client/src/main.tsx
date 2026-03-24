@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
+import { WalletProvider } from "./hooks/useWallet";
 import { App } from "./App";
 import "./styles/global.css";
 
@@ -15,7 +16,9 @@ document.documentElement.setAttribute(
 createRoot(root).render(
   <StrictMode>
     <BrowserRouter>
-      <App />
+      <WalletProvider>
+        <App />
+      </WalletProvider>
     </BrowserRouter>
   </StrictMode>
 );

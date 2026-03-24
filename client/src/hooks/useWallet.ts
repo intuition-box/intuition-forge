@@ -1,13 +1,26 @@
-import { useState, useCallback } from "react";
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  type ReactNode,
+} from "react";
 import { BrowserProvider, JsonRpcSigner, formatEther } from "ethers";
 import { CHAIN_HEX, INTUITION_CHAIN } from "@/config/constants";
+import { createElement } from "react";
 
 declare global {
   interface Window {
     ethereum?: {
-      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+      request: (args: {
+        method: string;
+        params?: unknown[];
+      }) => Promise<unknown>;
       on: (event: string, handler: (...args: unknown[]) => void) => void;
-      removeListener: (event: string, handler: (...args: unknown[]) => void) => void;
+      removeListener: (
+        event: string,
+        handler: (...args: unknown[]) => void
+      ) => void;
     };
   }
 }
@@ -19,24 +32,27 @@ interface WalletState {
   connected: boolean;
   connecting: boolean;
   error: string | null;
+  connect: () => Promise<void>;
+  disconnect: () => void;
 }
 
-export function useWallet() {
-  const [state, setState] = useState<WalletState>({
-    address: null,
-    balance: null,
-    signer: null,
-    connected: false,
-    connecting: false,
-    error: null,
-  });
+const WalletContext = createContext<WalletState | null>(null);
+
+export function WalletProvider({ children }: { children: ReactNode }) {
+  const [address, setAddress] = useState<string | null>(null);
+  const [balance, setBalance] = useState<string | null>(null);
+  const [signer, setSigner] = useState<JsonRpcSigner | null>(null);
+  const [connected, setConnected] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const connect = useCallback(async () => {
     if (!window.ethereum) {
-      setState((s) => ({ ...s, error: "MetaMask not detected" }));
+      setError("MetaMask not detected");
       return;
     }
-    setState((s) => ({ ...s, connecting: true, error: null }));
+    setConnecting(true);
+    setError(null);
     try {
       const provider = new BrowserProvider(window.ethereum);
       await provider.send("eth_requestAccounts", []);
@@ -59,37 +75,51 @@ export function useWallet() {
 
       const freshProvider = new BrowserProvider(window.ethereum);
       freshProvider.pollingInterval = 30000;
-      const signer = await freshProvider.getSigner();
-      const address = await signer.getAddress();
-      const bal = await freshProvider.getBalance(address);
+      const s = await freshProvider.getSigner();
+      const addr = await s.getAddress();
+      const bal = await freshProvider.getBalance(addr);
 
-      setState({
-        address,
-        balance: parseFloat(formatEther(bal)).toFixed(4),
-        signer,
-        connected: true,
-        connecting: false,
-        error: null,
-      });
+      setAddress(addr);
+      setBalance(parseFloat(formatEther(bal)).toFixed(4));
+      setSigner(s);
+      setConnected(true);
+      setConnecting(false);
     } catch (e) {
-      setState((s) => ({
-        ...s,
-        connecting: false,
-        error: e instanceof Error ? e.message : "Connection failed",
-      }));
+      setConnecting(false);
+      setError(e instanceof Error ? e.message : "Connection failed");
     }
   }, []);
 
   const disconnect = useCallback(() => {
-    setState({
-      address: null,
-      balance: null,
-      signer: null,
-      connected: false,
-      connecting: false,
-      error: null,
-    });
+    setAddress(null);
+    setBalance(null);
+    setSigner(null);
+    setConnected(false);
+    setError(null);
   }, []);
 
-  return { ...state, connect, disconnect };
+  return createElement(
+    WalletContext.Provider,
+    {
+      value: {
+        address,
+        balance,
+        signer,
+        connected,
+        connecting,
+        error,
+        connect,
+        disconnect,
+      },
+    },
+    children
+  );
+}
+
+export function useWallet(): WalletState {
+  const ctx = useContext(WalletContext);
+  if (!ctx) {
+    throw new Error("useWallet must be used within WalletProvider");
+  }
+  return ctx;
 }
