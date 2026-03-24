@@ -32,13 +32,20 @@ export function TopBar({ title }: TopBarProps) {
             &middot; {wallet.balance} TRUST
           </button>
         ) : (
-          <button
-            className={`${cs.btn} ${cs.btnPrimary} ${cs.btnSmall}`}
-            onClick={wallet.connect}
-            disabled={wallet.connecting}
-          >
-            {wallet.connecting ? "Connecting..." : "Connect Wallet"}
-          </button>
+          <>
+            {wallet.error && (
+              <span style={{ fontSize: "0.75rem", color: "var(--accent-red)", maxWidth: 250, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={wallet.error}>
+                {wallet.error}
+              </span>
+            )}
+            <button
+              className={`${cs.btn} ${cs.btnPrimary} ${cs.btnSmall}`}
+              onClick={wallet.connect}
+              disabled={wallet.connecting}
+            >
+              {wallet.connecting ? "Connecting..." : "Connect Wallet"}
+            </button>
+          </>
         )}
       </div>
     </div>
