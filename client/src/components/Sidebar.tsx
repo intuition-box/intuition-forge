@@ -12,6 +12,7 @@ const navItems: NavItem[] = [
   { icon: "\u25C6", label: "Atoms", path: "/atoms" },
   { icon: "\u25B3", label: "Triples", path: "/triples" },
   { icon: "\u26A1", label: "Batch Ops", path: "/batch" },
+  { icon: "\u2661", label: "Health", path: "/health" },
 ];
 
 export function Sidebar() {

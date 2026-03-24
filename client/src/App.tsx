@@ -5,6 +5,7 @@ import { OverviewPage } from "@/pages/OverviewPage";
 import { AtomsPage } from "@/pages/AtomsPage";
 import { TriplesPage } from "@/pages/TriplesPage";
 import { BatchPage } from "@/pages/BatchPage";
+import { HealthPage } from "@/pages/HealthPage";
 import styles from "@/styles/layout.module.css";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -12,6 +13,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/atoms": "Atoms",
   "/triples": "Triples",
   "/batch": "Batch Operations",
+  "/health": "Health",
 };
 
 export function App() {
@@ -29,6 +31,7 @@ export function App() {
             <Route path="/atoms" element={<AtomsPage />} />
             <Route path="/triples" element={<TriplesPage />} />
             <Route path="/batch" element={<BatchPage />} />
+            <Route path="/health" element={<HealthPage />} />
           </Routes>
         </div>
       </main>
