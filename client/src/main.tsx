@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { WalletProvider } from "./hooks/useWallet";
+import { ToastProvider } from "./components/Toast";
 import { App } from "./App";
 import "./styles/global.css";
 
@@ -17,7 +18,9 @@ createRoot(root).render(
   <StrictMode>
     <BrowserRouter>
       <WalletProvider>
-        <App />
+        <ToastProvider>
+          <App />
+        </ToastProvider>
       </WalletProvider>
     </BrowserRouter>
   </StrictMode>
