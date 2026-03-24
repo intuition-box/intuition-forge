@@ -116,18 +116,27 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // Wait for chain switch to settle
+      await new Promise((r) => setTimeout(r, 500));
+
       // Re-create provider after chain switch
       const freshProvider = new BrowserProvider(provider);
       freshProvider.pollingInterval = 30000;
       const s = await freshProvider.getSigner();
       const addr = await s.getAddress();
-      const bal = await freshProvider.getBalance(addr);
 
       setAddress(addr);
-      setBalance(parseFloat(formatEther(bal)).toFixed(4));
       setSigner(s);
       setConnected(true);
       setConnecting(false);
+
+      // Fetch balance separately (non-blocking)
+      try {
+        const bal = await freshProvider.getBalance(addr);
+        setBalance(parseFloat(formatEther(bal)).toFixed(4));
+      } catch {
+        setBalance("?");
+      }
     } catch (e) {
       setConnecting(false);
       setError(e instanceof Error ? e.message : "Connection failed");
