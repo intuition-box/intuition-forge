@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { useTheme } from "@/hooks/useTheme";
+import { WalletPicker } from "@/components/WalletPicker";
 import styles from "@/styles/layout.module.css";
 import cs from "@/styles/components.module.css";
 
@@ -12,14 +13,24 @@ export function TopBar({ title }: TopBarProps) {
   const wallet = useWallet();
   const { theme, toggleTheme } = useTheme();
   const [showPicker, setShowPicker] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
 
-  const handleConnect = () => {
-    if (wallet.wallets.length > 1) {
-      setShowPicker(!showPicker);
-    } else {
-      wallet.connect();
+  // Close picker on outside click
+  useEffect(() => {
+    if (!showPicker) return;
+    function handleClick(e: MouseEvent) {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setShowPicker(false);
+      }
     }
-  };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showPicker]);
+
+  // Close picker when connected
+  useEffect(() => {
+    if (wallet.connected) setShowPicker(false);
+  }, [wallet.connected]);
 
   return (
     <div className={styles.topBar}>
@@ -39,85 +50,32 @@ export function TopBar({ title }: TopBarProps) {
             title="Disconnect wallet"
           >
             {wallet.address?.slice(0, 6)}...{wallet.address?.slice(-4)}{" "}
-            &middot; {wallet.balance} TRUST
+            &middot; {wallet.balance ?? "?"} TRUST
           </button>
         ) : (
-          <div style={{ position: "relative" }}>
-            {wallet.error && (
-              <span
-                style={{
-                  fontSize: "0.75rem",
-                  color: "var(--accent-red)",
-                  position: "absolute",
-                  bottom: "100%",
-                  right: 0,
-                  marginBottom: 4,
-                  maxWidth: 300,
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  background: "var(--bg-card)",
-                  padding: "4px 8px",
-                  borderRadius: "var(--radius-sm)",
-                  border: "1px solid var(--accent-red-bg)",
-                }}
-                title={wallet.error}
-              >
-                {wallet.error}
-              </span>
-            )}
+          <div style={{ position: "relative" }} ref={pickerRef}>
             <button
               className={`${cs.btn} ${cs.btnPrimary} ${cs.btnSmall}`}
-              onClick={handleConnect}
+              onClick={() => setShowPicker(!showPicker)}
               disabled={wallet.connecting}
             >
               {wallet.connecting ? "Connecting..." : "Connect Wallet"}
             </button>
-            {showPicker && wallet.wallets.length > 1 && (
-              <div
-                style={{
-                  position: "absolute",
-                  top: "100%",
-                  right: 0,
-                  marginTop: 8,
-                  background: "var(--bg-card)",
-                  border: "1px solid var(--border-default)",
-                  borderRadius: "var(--radius-md)",
-                  padding: 8,
-                  minWidth: 200,
-                  zIndex: 100,
-                  boxShadow: "var(--shadow-lg)",
-                }}
-              >
-                {wallet.wallets.map((w, i) => (
-                  <button
-                    key={i}
-                    className={cs.btn}
-                    style={{
-                      width: "100%",
-                      background: "transparent",
-                      color: "var(--text-primary)",
-                      justifyContent: "flex-start",
-                      padding: "8px 12px",
-                      fontSize: "0.85rem",
-                      border: "none",
-                      borderRadius: "var(--radius-sm)",
-                    }}
-                    onClick={() => {
-                      setShowPicker(false);
-                      wallet.connect(w.provider);
-                    }}
-                  >
-                    {w.icon && (
-                      <img
-                        src={w.icon}
-                        alt=""
-                        style={{ width: 20, height: 20, borderRadius: 4 }}
-                      />
-                    )}
-                    {w.name}
-                  </button>
-                ))}
+            {showPicker && (
+              <div style={{
+                position: "absolute",
+                top: "100%",
+                right: 0,
+                marginTop: 8,
+                background: "var(--bg-card)",
+                border: "1px solid var(--border-default)",
+                borderRadius: "var(--radius-md)",
+                padding: 12,
+                minWidth: 240,
+                zIndex: 100,
+                boxShadow: "var(--shadow-lg)",
+              }}>
+                <WalletPicker label="Choose a wallet" />
               </div>
             )}
           </div>

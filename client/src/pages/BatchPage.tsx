@@ -4,6 +4,7 @@ import { useApi } from "@/hooks/useApi";
 import { useWallet } from "@/hooks/useWallet";
 import { useToast } from "@/components/Toast";
 import { Panel } from "@/components/Panel";
+import { WalletPicker } from "@/components/WalletPicker";
 import cs from "@/styles/components.module.css";
 import type { BatchPreparation, UnsignedTx } from "@/types/api";
 import { EXPLORER_URL } from "@/config/constants";
@@ -400,10 +401,10 @@ export function BatchPage() {
         {!wallet.connected ? (
           <div className={cs.emptyState}>
             <div className={cs.emptyIcon}>{"\u{1F512}"}</div>
-            <p>Connect your wallet to start importing</p>
-            <button className={`${cs.btn} ${cs.btnPrimary}`} onClick={() => wallet.connect()} style={{ marginTop: 16 }}>
-              Connect Wallet
-            </button>
+            <p style={{ marginBottom: 16 }}>Connect your wallet to start importing</p>
+            <div style={{ maxWidth: 300, margin: "0 auto" }}>
+              <WalletPicker label="Select a wallet" />
+            </div>
           </div>
         ) : (
           <>

@@ -11,16 +11,10 @@ import { BrowserProvider, JsonRpcSigner, formatEther } from "ethers";
 import { CHAIN_HEX, INTUITION_CHAIN } from "@/config/constants";
 import { createElement } from "react";
 
-// EIP-6963: Multi-wallet discovery
-interface EIP6963ProviderInfo {
-  uuid: string;
-  name: string;
-  icon: string;
-  rdns: string;
-}
+const WALLET_STORAGE_KEY = "intuition-forge-wallet";
 
 interface EIP6963ProviderDetail {
-  info: EIP6963ProviderInfo;
+  info: { uuid: string; name: string; icon: string; rdns: string };
   provider: EIP1193Provider;
 }
 
@@ -29,9 +23,10 @@ interface EIP1193Provider {
   on?: (event: string, handler: (...args: unknown[]) => void) => void;
 }
 
-interface WalletOption {
+export interface WalletOption {
   name: string;
   icon: string;
+  rdns: string;
   provider: EIP1193Provider;
 }
 
@@ -58,8 +53,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [wallets, setWallets] = useState<WalletOption[]>([]);
   const discoveredRef = useRef<Map<string, EIP6963ProviderDetail>>(new Map());
+  const autoConnectDone = useRef(false);
 
-  // EIP-6963: listen for wallet announcements
+  // EIP-6963: discover wallets
   useEffect(() => {
     function handleAnnounce(event: Event) {
       const detail = (event as CustomEvent<EIP6963ProviderDetail>).detail;
@@ -69,6 +65,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         Array.from(discoveredRef.current.values()).map((d) => ({
           name: d.info.name,
           icon: d.info.icon,
+          rdns: d.info.rdns,
           provider: d.provider,
         }))
       );
@@ -82,18 +79,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const connect = useCallback(async (explicitProvider?: EIP1193Provider) => {
-    // Priority: explicit provider > first discovered wallet > window.ethereum
-    const provider =
-      explicitProvider ??
-      discoveredRef.current.values().next().value?.provider ??
-      (window as { ethereum?: EIP1193Provider }).ethereum;
-
-    if (!provider) {
-      setError("No wallet detected. Install MetaMask.");
-      return;
-    }
-
+  const connectWithProvider = useCallback(async (provider: EIP1193Provider, rdns?: string) => {
     setConnecting(true);
     setError(null);
     try {
@@ -116,10 +102,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // Wait for chain switch to settle
       await new Promise((r) => setTimeout(r, 500));
 
-      // Re-create provider after chain switch
       const freshProvider = new BrowserProvider(provider);
       freshProvider.pollingInterval = 30000;
       const s = await freshProvider.getSigner();
@@ -130,7 +114,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setConnected(true);
       setConnecting(false);
 
-      // Fetch balance separately (non-blocking)
+      // Persist which wallet was used
+      if (rdns) {
+        localStorage.setItem(WALLET_STORAGE_KEY, rdns);
+      }
+
+      // Non-blocking balance fetch
       try {
         const bal = await freshProvider.getBalance(addr);
         setBalance(parseFloat(formatEther(bal)).toFixed(4));
@@ -143,13 +132,60 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const connect = useCallback(async (explicitProvider?: EIP1193Provider) => {
+    if (explicitProvider) {
+      // Find rdns for this provider
+      const found = Array.from(discoveredRef.current.values()).find(
+        (d) => d.provider === explicitProvider
+      );
+      return connectWithProvider(explicitProvider, found?.info.rdns);
+    }
+
+    // No explicit provider — don't auto-pick, let TopBar show the picker
+    // If only one wallet discovered, use it
+    const discovered = Array.from(discoveredRef.current.values());
+    if (discovered.length === 1) {
+      const d = discovered[0]!;
+      return connectWithProvider(d.provider, d.info.rdns);
+    }
+    if (discovered.length === 0) {
+      setError("No wallet detected. Install MetaMask.");
+      return;
+    }
+
+    // Multiple wallets — set error to trigger picker in TopBar
+    setError("Multiple wallets detected — choose one from the top bar.");
+  }, [connectWithProvider]);
+
   const disconnect = useCallback(() => {
     setAddress(null);
     setBalance(null);
     setSigner(null);
     setConnected(false);
     setError(null);
+    localStorage.removeItem(WALLET_STORAGE_KEY);
   }, []);
+
+  // Auto-reconnect on page load
+  useEffect(() => {
+    if (autoConnectDone.current || connected) return;
+    autoConnectDone.current = true;
+
+    const savedRdns = localStorage.getItem(WALLET_STORAGE_KEY);
+    if (!savedRdns) return;
+
+    // Wait a bit for wallets to announce
+    const timer = setTimeout(() => {
+      const found = Array.from(discoveredRef.current.values()).find(
+        (d) => d.info.rdns === savedRdns
+      );
+      if (found) {
+        connectWithProvider(found.provider, found.info.rdns);
+      }
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [connected, connectWithProvider]);
 
   return createElement(
     WalletContext.Provider,
