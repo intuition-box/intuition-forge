@@ -49,7 +49,7 @@ class PinRequest(BaseModel):
 @router.post("/prepare-atoms")
 async def prepare_atoms(req: PrepareAtomsRequest):
     entities = [e.model_dump() for e in req.entities]
-    return batch_service.prepare_atom_batch(entities, req.batch_size)
+    return await batch_service.prepare_atom_batch(entities, req.batch_size)
 
 
 @router.post("/prepare-triples")

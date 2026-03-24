@@ -40,37 +40,60 @@ class BatchOperation:
     status: str = "pending"  # pending | running | completed | error
 
 
+def _validate_ipfs_uri(uri: str) -> str:
+    """Validate that the pinning response is a proper IPFS URI."""
+    if not uri or not uri.startswith("ipfs://"):
+        raise ValueError(f"Invalid IPFS URI from pinning: {uri!r}")
+    return uri
+
+
 class BatchService:
     def __init__(self):
         self._operations: dict[str, BatchOperation] = {}
 
-    def prepare_atom_batch(
+    async def prepare_atom_batch(
         self, entities: list[dict], batch_size: int = 20
-    ) -> list[dict]:
-        """Prepare atom creation batches, checking which already exist."""
+    ) -> dict:
+        """Prepare atom creation batches: pin to IPFS, then check existence."""
         items = []
         for entity in entities:
-            label = entity["name"]
-            data = label.encode("utf-8")
+            name = entity["name"]
+            description = entity.get("description", "")
+            entity_type = entity.get("type", "Thing")
+
+            # Pin to IPFS first — all atoms must be IPFS-pinned
+            if entity_type == "Person":
+                uri = await graphql_service.pin_person(name, description)
+            elif entity_type == "Organization":
+                uri = await graphql_service.pin_organization(name, description)
+            else:
+                uri = await graphql_service.pin_thing(name, description)
+
+            _validate_ipfs_uri(uri)
+
+            # Atom data is the IPFS URI encoded as bytes
+            data = uri.encode("utf-8")
             atom_id = rpc_service.calculate_atom_id(data)
             exists = rpc_service.is_term_created(atom_id)
+
             items.append(
                 {
-                    "label": label,
+                    "label": name,
                     "data": "0x" + data.hex(),
                     "atom_id": atom_id,
                     "exists": exists,
-                    "status": "skipped" if exists else "pending",
-                    "description": entity.get("description", ""),
-                    "type": entity.get("type", "Thing"),
+                    "status": "skipped" if exists else "pinned",
+                    "description": description,
+                    "type": entity_type,
+                    "ipfs_uri": uri,
                 }
             )
 
         new_items = [i for i in items if not i["exists"]]
         batches = []
+        atom_cost = rpc_service.get_atom_cost()
         for i in range(0, len(new_items), batch_size):
             batch = new_items[i : i + batch_size]
-            atom_cost = rpc_service.get_atom_cost()
             total_cost = atom_cost * len(batch)
             batches.append(
                 {
@@ -87,7 +110,7 @@ class BatchService:
             "existing": len(items) - len(new_items),
             "to_create": len(new_items),
             "batches": batches,
-            "atom_cost_per_item": rpc_service.get_atom_cost(),
+            "atom_cost_per_item": atom_cost,
         }
 
     def prepare_triple_batch(
@@ -165,11 +188,15 @@ class BatchService:
     async def pin_and_prepare_atom(
         self, name: str, description: str = "", entity_type: str = "Thing"
     ) -> dict:
-        """Pin entity to IPFS and return atom data ready for creation."""
+        """Pin a single entity to IPFS and return atom data ready for creation."""
         if entity_type == "Person":
             uri = await graphql_service.pin_person(name, description)
+        elif entity_type == "Organization":
+            uri = await graphql_service.pin_organization(name, description)
         else:
             uri = await graphql_service.pin_thing(name, description)
+
+        _validate_ipfs_uri(uri)
 
         data = uri.encode("utf-8")
         atom_id = rpc_service.calculate_atom_id(data)

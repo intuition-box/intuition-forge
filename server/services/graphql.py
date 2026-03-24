@@ -29,21 +29,29 @@ class GraphQLService:
         search: str | None = None,
         atom_type: str | None = None,
     ) -> dict:
-        where_clauses = []
+        var_defs = []
+        where_parts = []
+        variables: dict = {"limit": limit, "offset": offset}
+
         if search:
-            where_clauses.append(f'label: {{ _ilike: "%{search}%" }}')
+            var_defs.append("$search: String!")
+            where_parts.append("label: { _ilike: $search }")
+            variables["search"] = f"%{search}%"
         if atom_type:
-            where_clauses.append(f'type: {{ _eq: "{atom_type}" }}')
-        where = ""
-        if where_clauses:
-            where = f"where: {{ {', '.join(where_clauses)} }},"
+            var_defs.append("$atomType: String!")
+            where_parts.append("type: { _eq: $atomType }")
+            variables["atomType"] = atom_type
+
+        var_sig = f"({', '.join(['$limit: Int!', '$offset: Int!'] + var_defs)})"
+        where = f"where: {{ {', '.join(where_parts)} }}," if where_parts else ""
+        where_agg = f"where: {{ {', '.join(where_parts)} }}" if where_parts else ""
 
         query = f"""
-        query GetAtoms {{
+        query GetAtoms{var_sig} {{
             atoms(
                 {where}
-                limit: {limit},
-                offset: {offset},
+                limit: $limit,
+                offset: $offset,
                 order_by: {{ block_timestamp: desc }}
             ) {{
                 term_id
@@ -57,12 +65,12 @@ class GraphQLService:
                     position_count
                 }}
             }}
-            atoms_aggregate({where.replace(',', '')}) {{
+            atoms_aggregate({where_agg}) {{
                 aggregate {{ count }}
             }}
         }}
         """
-        return await self._query(query)
+        return await self._query(query, variables)
 
     async def get_triples(
         self,
@@ -71,25 +79,29 @@ class GraphQLService:
         predicate_label: str | None = None,
         subject_label: str | None = None,
     ) -> dict:
-        where_clauses = []
+        var_defs = []
+        where_parts = []
+        variables: dict = {"limit": limit, "offset": offset}
+
         if predicate_label:
-            where_clauses.append(
-                f'predicate: {{ label: {{ _ilike: "%{predicate_label}%" }} }}'
-            )
+            var_defs.append("$predLabel: String!")
+            where_parts.append("predicate: { label: { _ilike: $predLabel } }")
+            variables["predLabel"] = f"%{predicate_label}%"
         if subject_label:
-            where_clauses.append(
-                f'subject: {{ label: {{ _ilike: "%{subject_label}%" }} }}'
-            )
-        where = ""
-        if where_clauses:
-            where = f"where: {{ {', '.join(where_clauses)} }},"
+            var_defs.append("$subLabel: String!")
+            where_parts.append("subject: { label: { _ilike: $subLabel } }")
+            variables["subLabel"] = f"%{subject_label}%"
+
+        var_sig = f"({', '.join(['$limit: Int!', '$offset: Int!'] + var_defs)})"
+        where = f"where: {{ {', '.join(where_parts)} }}," if where_parts else ""
+        where_agg = f"where: {{ {', '.join(where_parts)} }}" if where_parts else ""
 
         query = f"""
-        query GetTriples {{
+        query GetTriples{var_sig} {{
             triples(
                 {where}
-                limit: {limit},
-                offset: {offset},
+                limit: $limit,
+                offset: $offset,
                 order_by: {{ block_timestamp: desc }}
             ) {{
                 term_id
@@ -118,12 +130,12 @@ class GraphQLService:
                     position_count
                 }}
             }}
-            triples_aggregate({where.replace(',', '')}) {{
+            triples_aggregate({where_agg}) {{
                 aggregate {{ count }}
             }}
         }}
         """
-        return await self._query(query)
+        return await self._query(query, variables)
 
     async def get_stats(self) -> dict:
         query = """
@@ -172,53 +184,53 @@ class GraphQLService:
         return await self._query(query, {"termId": term_id})
 
     async def get_recent_activity(self, limit: int = 20) -> dict:
-        query = f"""
-        query RecentActivity {{
+        query = """
+        query RecentActivity($limit: Int!) {
             atoms(
-                limit: {limit},
-                order_by: {{ block_timestamp: desc }}
-            ) {{
+                limit: $limit,
+                order_by: { block_timestamp: desc }
+            ) {
                 term_id
                 label
                 type
                 block_timestamp
                 creator_id
-            }}
+            }
             triples(
-                limit: {limit},
-                order_by: {{ block_timestamp: desc }}
-            ) {{
+                limit: $limit,
+                order_by: { block_timestamp: desc }
+            ) {
                 term_id
-                subject {{ label }}
-                predicate {{ label }}
-                object {{ label }}
+                subject { label }
+                predicate { label }
+                object { label }
                 block_timestamp
                 creator_id
-            }}
-        }}
+            }
+        }
         """
-        return await self._query(query)
+        return await self._query(query, {"limit": limit})
 
     async def get_top_atoms_by_positions(self, limit: int = 10) -> dict:
-        query = f"""
-        query TopAtoms {{
+        query = """
+        query TopAtoms($limit: Int!) {
             atoms(
-                limit: {limit},
-                order_by: {{ vault: {{ position_count: desc }} }}
-                where: {{ vault: {{ position_count: {{ _gt: 0 }} }} }}
-            ) {{
+                limit: $limit,
+                order_by: { vault: { position_count: desc } }
+                where: { vault: { position_count: { _gt: 0 } } }
+            ) {
                 term_id
                 label
                 type
-                vault {{
+                vault {
                     total_shares
                     position_count
                     current_share_price
-                }}
-            }}
-        }}
+                }
+            }
+        }
         """
-        return await self._query(query)
+        return await self._query(query, {"limit": limit})
 
     async def get_predicate_distribution(self) -> dict:
         query = """
@@ -286,6 +298,28 @@ class GraphQLService:
             },
         )
         return data["pinPerson"]["uri"]
+
+    async def pin_organization(
+        self,
+        name: str,
+        description: str = "",
+    ) -> str:
+        query = """
+        mutation PinOrganization($name: String!, $description: String!) {
+            pinOrganization(organization: {
+                name: $name,
+                description: $description,
+                image: "",
+                url: ""
+            }) {
+                uri
+            }
+        }
+        """
+        data = await self._query(
+            query, {"name": name, "description": description}
+        )
+        return data["pinOrganization"]["uri"]
 
 
 graphql_service = GraphQLService()
