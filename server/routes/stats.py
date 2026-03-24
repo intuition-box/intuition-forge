@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 
 from services.graphql import graphql_service
 from services.rpc import rpc_service
@@ -11,8 +11,8 @@ router = APIRouter()
 
 
 @router.get("/overview")
-async def get_overview():
-    # GraphQL stats (usually reliable)
+async def get_overview(x_rpc_key: str | None = Header(None)):
+    # GraphQL stats
     try:
         stats = await graphql_service.get_stats()
         atoms_count = stats["atoms_aggregate"]["aggregate"]["count"]
@@ -22,16 +22,17 @@ async def get_overview():
         logger.error("GraphQL stats failed: %s", e)
         atoms_count = triples_count = positions_count = 0
 
-    # RPC calls (may fail if node is slow/unreachable)
+    # RPC calls (use vib if key provided)
     block = 0
     atom_cost = 0
     triple_cost = 0
     curve_id = 1
     try:
-        block = rpc_service.get_block_number()
-        atom_cost = rpc_service.get_atom_cost()
-        triple_cost = rpc_service.get_triple_cost()
-        curve_id = rpc_service.get_default_curve_id()
+        w3, contract = rpc_service._get_provider(x_rpc_key)
+        block = w3.eth.block_number
+        atom_cost = contract.functions.getAtomCost().call()
+        triple_cost = contract.functions.getTripleCost().call()
+        curve_id = contract.functions.getBondingCurveConfig().call()[1]
     except Exception as e:
         logger.error("RPC calls failed: %s", e)
 
@@ -46,6 +47,7 @@ async def get_overview():
         "triple_cost_trust": triple_cost / 10**18 if triple_cost else 0,
         "default_curve_id": curve_id,
         "chain_id": 1155,
+        "rpc_upgraded": bool(x_rpc_key),
     }
 
 

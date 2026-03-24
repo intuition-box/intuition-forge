@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { getRpcKey, setRpcKey } from "@/services/api";
 import styles from "@/styles/layout.module.css";
+import cs from "@/styles/components.module.css";
 
 interface NavItem {
   icon: string;
@@ -18,6 +21,19 @@ const navItems: NavItem[] = [
 export function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
+  const [keyInput, setKeyInput] = useState(getRpcKey());
+  const [saved, setSaved] = useState(!!getRpcKey());
+
+  function handleSaveKey() {
+    setRpcKey(keyInput.trim());
+    setSaved(!!keyInput.trim());
+  }
+
+  function handleClearKey() {
+    setRpcKey("");
+    setKeyInput("");
+    setSaved(false);
+  }
 
   return (
     <aside className={styles.sidebar}>
@@ -47,6 +63,39 @@ export function Sidebar() {
       </nav>
 
       <div className={styles.sidebarFooter}>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--text-muted)", marginBottom: 6, fontWeight: 600 }}>
+            RPC Key {saved && <span style={{ color: "var(--accent-green)" }}>(active)</span>}
+          </div>
+          <input
+            className={cs.input}
+            type="password"
+            placeholder="Enter API key..."
+            value={keyInput}
+            onChange={(e) => { setKeyInput(e.target.value); setSaved(false); }}
+            onKeyDown={(e) => e.key === "Enter" && handleSaveKey()}
+            style={{ fontSize: "0.78rem", padding: "6px 10px", marginBottom: 6 }}
+          />
+          <div style={{ display: "flex", gap: 4 }}>
+            <button
+              className={`${cs.btn} ${cs.btnPrimary} ${cs.btnSmall}`}
+              onClick={handleSaveKey}
+              disabled={!keyInput.trim() || saved}
+              style={{ flex: 1, padding: "4px 8px", fontSize: "0.72rem" }}
+            >
+              Save
+            </button>
+            {saved && (
+              <button
+                className={`${cs.btn} ${cs.btnSecondary} ${cs.btnSmall}`}
+                onClick={handleClearKey}
+                style={{ padding: "4px 8px", fontSize: "0.72rem" }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
         <div className={styles.chainBadge}>
           <div className={styles.chainDot} />
           <span>Chain 1155 &middot; Intuition</span>

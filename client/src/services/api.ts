@@ -1,10 +1,32 @@
 const BASE = "/api";
+const RPC_KEY_STORAGE = "intuition-forge-rpc-key";
+
+export function getRpcKey(): string {
+  return localStorage.getItem(RPC_KEY_STORAGE) ?? "";
+}
+
+export function setRpcKey(key: string): void {
+  if (key) {
+    localStorage.setItem(RPC_KEY_STORAGE, key);
+  } else {
+    localStorage.removeItem(RPC_KEY_STORAGE);
+  }
+}
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${url}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
-  });
+  const rpcKey = getRpcKey();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...Object.fromEntries(
+      Object.entries(init?.headers ?? {}).filter(
+        (e): e is [string, string] => typeof e[1] === "string"
+      )
+    ),
+  };
+  if (rpcKey) {
+    headers["X-RPC-Key"] = rpcKey;
+  }
+  const res = await fetch(`${BASE}${url}`, { ...init, headers });
   if (!res.ok) {
     throw new Error(`API error: ${res.status} ${res.statusText}`);
   }

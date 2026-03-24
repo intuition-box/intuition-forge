@@ -133,6 +133,9 @@ MULTIVAULT_ABI = [
 ]
 
 
+VIB_RPC_URL = "https://vib.rpc.intuition.box/http"
+
+
 class RpcService:
     def __init__(self):
         self._read_w3 = Web3(Web3.HTTPProvider(
@@ -147,6 +150,23 @@ class RpcService:
             address=Web3.to_checksum_address(settings.multivault_address),
             abi=MULTIVAULT_ABI,
         )
+
+    def _get_provider(self, api_key: str | None = None) -> tuple[Web3, "Contract"]:
+        """Return (web3, contract) using vib RPC if api_key provided, else default."""
+        if not api_key:
+            return self._read_w3, self._contract
+        w3 = Web3(Web3.HTTPProvider(
+            VIB_RPC_URL,
+            request_kwargs={
+                "timeout": 15,
+                "headers": {"Authorization": f"Bearer {api_key}"},
+            },
+        ))
+        contract = w3.eth.contract(
+            address=Web3.to_checksum_address(settings.multivault_address),
+            abi=MULTIVAULT_ABI,
+        )
+        return w3, contract
 
     @property
     def read_w3(self) -> Web3:
