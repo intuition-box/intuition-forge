@@ -4,17 +4,8 @@ import { getRpcKey, setRpcKey } from "@/services/api";
 import styles from "@/styles/layout.module.css";
 import cs from "@/styles/components.module.css";
 
-interface NavItem {
-  icon: string;
-  label: string;
-  path: string;
-}
-
-const navItems: NavItem[] = [
-  { icon: "\u2302", label: "Overview", path: "/" },
-  { icon: "\u25C6", label: "Atoms", path: "/atoms" },
-  { icon: "\u25B3", label: "Triples", path: "/triples" },
-  { icon: "\u26A1", label: "Batch Ops", path: "/batch" },
+const navItems = [
+  { icon: "\u26A1", label: "Batch Import", path: "/" },
   { icon: "\u2661", label: "Health", path: "/health" },
 ];
 
@@ -46,7 +37,6 @@ export function Sidebar() {
       </div>
 
       <nav className={styles.sidebarNav}>
-        <div className={styles.navSection}>Main</div>
         {navItems.map((item) => {
           const active = location.pathname === item.path;
           return (

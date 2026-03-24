@@ -4,9 +4,6 @@ from fastapi import FastAPI, Header
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from routes.atoms import router as atoms_router
-from routes.triples import router as triples_router
-from routes.stats import router as stats_router
 from routes.batch import router as batch_router
 
 logging.basicConfig(level=logging.INFO)
@@ -21,9 +18,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(atoms_router, prefix="/api/atoms", tags=["atoms"])
-app.include_router(triples_router, prefix="/api/triples", tags=["triples"])
-app.include_router(stats_router, prefix="/api/stats", tags=["stats"])
 app.include_router(batch_router, prefix="/api/batch", tags=["batch"])
 
 
@@ -33,7 +27,6 @@ async def health(x_rpc_key: str | None = Header(None)):
 
     from services.rpc import rpc_service
 
-    # Test RPC (with user key if provided)
     try:
         w3, _ = rpc_service._get_provider(x_rpc_key)
         block = w3.eth.block_number
@@ -43,7 +36,6 @@ async def health(x_rpc_key: str | None = Header(None)):
         checks["rpc"] = {"status": "error", "error": str(e), "url": settings.rpc_read_url}
         checks["status"] = "degraded"
 
-    # Test GraphQL
     try:
         from services.graphql import graphql_service
         await graphql_service.get_stats()

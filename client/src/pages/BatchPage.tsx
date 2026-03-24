@@ -1,15 +1,19 @@
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { api } from "@/services/api";
 import { useApi } from "@/hooks/useApi";
 import { useWallet } from "@/hooks/useWallet";
 import { Panel } from "@/components/Panel";
-import { KpiCard } from "@/components/KpiCard";
 import cs from "@/styles/components.module.css";
 import type { BatchPreparation, UnsignedTx } from "@/types/api";
 import { EXPLORER_URL } from "@/config/constants";
 
 type BatchMode = "atoms" | "triples";
-type BatchStatus = "idle" | "preparing" | "ready" | "executing" | "done" | "error";
+
+interface LogEntry {
+  time: string;
+  msg: string;
+  type: "info" | "success" | "error" | "warn" | "step";
+}
 
 export function BatchPage() {
   const wallet = useWallet();
@@ -17,20 +21,25 @@ export function BatchPage() {
 
   const [mode, setMode] = useState<BatchMode>("atoms");
   const [inputText, setInputText] = useState("");
-  const [status, setStatus] = useState<BatchStatus>("idle");
   const [preparation, setPreparation] = useState<BatchPreparation | null>(null);
-  const [currentBatch, setCurrentBatch] = useState(0);
-  const [txHash, setTxHash] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState({ current: 0, total: 0, phase: "" });
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const logRef = useRef<HTMLDivElement>(null);
+  const stopRef = useRef(false);
 
-  const addLog = (msg: string) => setLogs((l) => [...l, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+  const addLog = useCallback((msg: string, type: LogEntry["type"] = "info") => {
+    const time = new Date().toLocaleTimeString();
+    setLogs((l) => [...l, { time, msg, type }]);
+    setTimeout(() => logRef.current?.scrollTo(0, logRef.current.scrollHeight), 50);
+  }, []);
 
   async function handlePrepare() {
-    setStatus("preparing");
-    setError(null);
+    setPreparation(null);
     setLogs([]);
-    addLog(`Preparing ${mode} batch...`);
+    stopRef.current = false;
+
+    addLog(`--- Preparing ${mode} import ---`, "step");
 
     try {
       if (mode === "atoms") {
@@ -39,214 +48,260 @@ export function BatchPage() {
           const [name, description] = line.split("|").map((s) => s.trim());
           return { name: name ?? "", description: description ?? "" };
         });
-        addLog(`Parsed ${entities.length} entities`);
+        addLog(`Parsed ${entities.length} entities from input`);
+        addLog("Pinning to IPFS + checking on-chain existence...", "step");
+
         const result = await api.batch.prepareAtoms(entities);
         setPreparation(result);
-        addLog(`${result.existing} already exist, ${result.to_create} to create in ${result.batches.length} batches`);
+
+        addLog(`IPFS pinning complete`, "success");
+        addLog(`  Total: ${result.total_items} | Existing: ${result.existing} | To create: ${result.to_create}`);
+        if (result.batches.length > 0) {
+          addLog(`  ${result.batches.length} batch(es) of up to 20 items`, "info");
+          addLog(`  Estimated cost: ${result.batches.reduce((s, b) => s + b.total_cost_trust, 0).toFixed(4)} TRUST`, "warn");
+        } else {
+          addLog("Nothing to create — all entities already exist on-chain", "success");
+        }
       } else {
         const triples = JSON.parse(inputText) as Array<{
           subject_id: string;
           predicate_id: string;
           object_id: string;
         }>;
-        addLog(`Parsed ${triples.length} triples`);
+        addLog(`Parsed ${triples.length} triples from JSON`);
+        addLog("Checking on-chain existence...", "step");
+
         const result = await api.batch.prepareTriples(triples);
         setPreparation(result);
-        addLog(`${result.existing} already exist, ${result.to_create} to create in ${result.batches.length} batches`);
+
+        addLog(`Existence check complete`, "success");
+        addLog(`  Total: ${result.total_items} | Existing: ${result.existing} | To create: ${result.to_create}`);
+        if (result.batches.length > 0) {
+          addLog(`  ${result.batches.length} batch(es) of up to 20 items`);
+          addLog(`  Estimated cost: ${result.batches.reduce((s, b) => s + b.total_cost_trust, 0).toFixed(4)} TRUST`, "warn");
+        } else {
+          addLog("Nothing to create — all triples already exist on-chain", "success");
+        }
       }
-      setStatus("ready");
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      addLog(`ERROR: ${msg}`);
-      setStatus("error");
+      addLog(`FAILED: ${e instanceof Error ? e.message : String(e)}`, "error");
     }
   }
 
-  async function handleExecuteBatch(batchIndex: number) {
+  async function handleExecuteAll() {
     if (!wallet.signer || !preparation) return;
-    setCurrentBatch(batchIndex);
-    setStatus("executing");
-    setError(null);
+    setRunning(true);
+    stopRef.current = false;
+    const totalBatches = preparation.batches.length;
+    setProgress({ current: 0, total: totalBatches, phase: "Starting..." });
 
-    const batch = preparation.batches[batchIndex];
-    if (!batch) return;
+    addLog(`--- Executing ${totalBatches} batch(es) ---`, "step");
 
-    addLog(`Executing batch ${batchIndex + 1}/${preparation.batches.length} (${batch.items.length} items)...`);
+    let successCount = 0;
+    let failCount = 0;
 
-    try {
-      let tx: UnsignedTx;
-      if (mode === "atoms") {
-        tx = await api.batch.buildAtomTx(batch.items);
-      } else {
-        tx = await api.batch.buildTripleTx(batch.items);
+    for (let i = 0; i < totalBatches; i++) {
+      if (stopRef.current) {
+        addLog("Stopped by user", "warn");
+        break;
       }
 
-      addLog(`TX built: ${tx.to} value=${(BigInt(tx.value) / BigInt(10 ** 18)).toString()} TRUST`);
-      addLog("Confirm in MetaMask...");
+      const batch = preparation.batches[i]!;
+      setProgress({ current: i + 1, total: totalBatches, phase: `Batch ${i + 1}/${totalBatches}` });
+      addLog(`[Batch ${i + 1}/${totalBatches}] ${batch.items.length} items — ${batch.total_cost_trust.toFixed(4)} TRUST`, "step");
 
-      const txResponse = await wallet.signer.sendTransaction({
-        to: tx.to,
-        data: tx.data,
-        value: BigInt(tx.value),
-      });
+      try {
+        // Build TX
+        addLog(`  Building transaction...`);
+        let tx: UnsignedTx;
+        if (mode === "atoms") {
+          tx = await api.batch.buildAtomTx(batch.items);
+        } else {
+          tx = await api.batch.buildTripleTx(batch.items);
+        }
+        addLog(`  TX ready — value: ${(BigInt(tx.value) / BigInt(10 ** 18)).toString()} TRUST`);
 
-      setTxHash(txResponse.hash);
-      addLog(`TX sent: ${txResponse.hash.slice(0, 14)}...`);
+        // Send
+        addLog(`  Waiting for wallet confirmation...`, "warn");
+        const txResponse = await wallet.signer.sendTransaction({
+          to: tx.to,
+          data: tx.data,
+          value: BigInt(tx.value),
+        });
+        addLog(`  TX sent: ${txResponse.hash.slice(0, 18)}...`);
 
-      const receipt = await txResponse.wait();
-      addLog(`Confirmed in block ${receipt?.blockNumber}`);
-      setStatus("done");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      addLog(`ERROR: ${msg}`);
-      setStatus("error");
+        // Wait
+        addLog(`  Waiting for confirmation...`);
+        const receipt = await txResponse.wait();
+        addLog(`  Confirmed in block #${receipt?.blockNumber} [${EXPLORER_URL}/tx/${txResponse.hash}]`, "success");
+        successCount++;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes("rejected") || msg.includes("denied")) {
+          addLog(`  User rejected transaction`, "warn");
+        } else {
+          addLog(`  FAILED: ${msg.slice(0, 200)}`, "error");
+        }
+        failCount++;
+      }
     }
+
+    addLog(`--- Import complete ---`, "step");
+    addLog(`  Success: ${successCount} | Failed: ${failCount} | Total: ${totalBatches}`, successCount === totalBatches ? "success" : "warn");
+    setRunning(false);
+    setProgress({ current: totalBatches, total: totalBatches, phase: "Done" });
   }
+
+  const logColors: Record<LogEntry["type"], string> = {
+    info: "var(--text-secondary)",
+    success: "var(--accent-green)",
+    error: "var(--accent-red)",
+    warn: "var(--accent-orange)",
+    step: "var(--accent-blue)",
+  };
 
   return (
     <>
-      <div className={cs.kpiGrid} style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
-        <KpiCard
-          label="Atom Cost"
-          value={costs ? `${costs.atom_cost_trust} TRUST` : "..."}
-          icon={"\u25C6"}
-          color="blue"
-        />
-        <KpiCard
-          label="Triple Cost"
-          value={costs ? `${costs.triple_cost_trust} TRUST` : "..."}
-          icon={"\u25B3"}
-          color="purple"
-        />
-      </div>
-
       <Panel
-        title="Batch Operations"
+        title="Intuition Forge"
         badge={
           <span className={`${cs.tag} ${mode === "atoms" ? cs.tagBlue : cs.tagPurple}`}>
-            {mode === "atoms" ? "Create Atoms" : "Create Triples"}
+            {mode === "atoms" ? "Atoms" : "Triples"}
           </span>
         }
         actions={
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {costs && (
+              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                Atom: {costs.atom_cost_trust} | Triple: {costs.triple_cost_trust} TRUST
+              </span>
+            )}
             <button
               className={`${cs.btn} ${mode === "atoms" ? cs.btnPrimary : cs.btnSecondary} ${cs.btnSmall}`}
-              onClick={() => { setMode("atoms"); setPreparation(null); setStatus("idle"); }}
+              onClick={() => { setMode("atoms"); setPreparation(null); setLogs([]); }}
             >
               Atoms
             </button>
             <button
               className={`${cs.btn} ${mode === "triples" ? cs.btnPrimary : cs.btnSecondary} ${cs.btnSmall}`}
-              onClick={() => { setMode("triples"); setPreparation(null); setStatus("idle"); }}
+              onClick={() => { setMode("triples"); setPreparation(null); setLogs([]); }}
             >
               Triples
             </button>
           </div>
         }
       >
-        {!wallet.connected && (
+        {!wallet.connected ? (
           <div className={cs.emptyState}>
             <div className={cs.emptyIcon}>{"\u{1F512}"}</div>
-            <p>Connect your wallet to execute batch operations</p>
+            <p>Connect your wallet to start importing</p>
             <button className={`${cs.btn} ${cs.btnPrimary}`} onClick={() => wallet.connect()} style={{ marginTop: 16 }}>
               Connect Wallet
             </button>
           </div>
-        )}
-
-        {wallet.connected && (
+        ) : (
           <>
+            {/* Input */}
             <textarea
               className={cs.input}
-              rows={6}
+              rows={8}
               placeholder={
                 mode === "atoms"
-                  ? "One entity per line: name | description (optional)\nExample:\nEthereum | Decentralized blockchain\nVitalik Buterin | Co-founder"
-                  : 'JSON array of triples:\n[{"subject_id": "0x...", "predicate_id": "0x...", "object_id": "0x..."}]'
+                  ? "One entity per line: name | description (optional)\n\nExample:\nEthereum | Decentralized blockchain\nVitalik Buterin | Co-founder of Ethereum\nDeFi | Decentralized Finance"
+                  : 'JSON array of triples:\n[\n  {"subject_id": "0x...", "predicate_id": "0x...", "object_id": "0x..."}\n]'
               }
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
+              disabled={running}
               style={{ fontFamily: "var(--font-mono)", fontSize: "0.82rem", resize: "vertical" }}
             />
 
-            <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+            {/* Actions */}
+            <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
               <button
                 className={`${cs.btn} ${cs.btnPrimary}`}
                 onClick={handlePrepare}
-                disabled={!inputText.trim() || status === "preparing" || status === "executing"}
+                disabled={!inputText.trim() || running}
               >
-                {status === "preparing" ? "Preparing..." : "Prepare Batches"}
+                {running ? "Running..." : "1. Prepare"}
               </button>
+              {preparation && preparation.batches.length > 0 && (
+                <button
+                  className={`${cs.btn} ${cs.btnGreen}`}
+                  onClick={handleExecuteAll}
+                  disabled={running}
+                >
+                  {running ? "Executing..." : `2. Execute All (${preparation.batches.length} batch${preparation.batches.length > 1 ? "es" : ""})`}
+                </button>
+              )}
+              {running && (
+                <button
+                  className={`${cs.btn} ${cs.btnSecondary}`}
+                  onClick={() => { stopRef.current = true; }}
+                  style={{ color: "var(--accent-red)" }}
+                >
+                  Stop
+                </button>
+              )}
             </div>
 
-            {preparation && status !== "idle" && (
-              <div style={{ marginTop: 20 }}>
-                <div className={cs.kpiGrid} style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-                  <div className={cs.kpiCard}>
-                    <div className={cs.kpiLabel}>Total Items</div>
-                    <div className={cs.kpiValue}>{preparation.total_items}</div>
-                  </div>
-                  <div className={cs.kpiCard}>
-                    <div className={cs.kpiLabel}>Already Exist</div>
-                    <div className={cs.kpiValue} style={{ color: "var(--accent-green)" }}>{preparation.existing}</div>
-                  </div>
-                  <div className={cs.kpiCard}>
-                    <div className={cs.kpiLabel}>To Create</div>
-                    <div className={cs.kpiValue} style={{ color: "var(--accent-orange)" }}>{preparation.to_create}</div>
-                  </div>
+            {/* Progress bar */}
+            {progress.total > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 4 }}>
+                  <span>{progress.phase}</span>
+                  <span>{progress.current}/{progress.total}</span>
                 </div>
+                <div className={cs.progressBar}>
+                  <div
+                    className={cs.progressFill}
+                    style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
 
-                {preparation.batches.map((batch, i) => (
-                  <div key={i} style={{ marginTop: 12, padding: 16, background: "var(--bg-tertiary)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-default)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                      <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>
-                        Batch {i + 1} &middot; {batch.items.length} items
-                      </span>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <span className={cs.mono} style={{ color: "var(--accent-orange)" }}>
-                          {batch.total_cost_trust.toFixed(4)} TRUST
-                        </span>
-                        <button
-                          className={`${cs.btn} ${cs.btnGreen} ${cs.btnSmall}`}
-                          onClick={() => handleExecuteBatch(i)}
-                          disabled={status === "executing"}
-                        >
-                          {status === "executing" && currentBatch === i ? "Executing..." : "Execute"}
-                        </button>
-                      </div>
-                    </div>
-                    <div style={{ maxHeight: 120, overflow: "auto", fontSize: "0.78rem", color: "var(--text-secondary)" }}>
-                      {batch.items.map((item, j) => (
-                        <div key={j} style={{ padding: "2px 0", borderBottom: "1px solid var(--border-subtle)" }}>
-                          {"label" in item ? (item as { label: string }).label : `${(item as { subject_label?: string }).subject_label ?? ""} -> ${(item as { object_label?: string }).object_label ?? ""}`}
-                        </div>
-                      ))}
-                    </div>
+            {/* Summary cards */}
+            {preparation && (
+              <div className={cs.kpiGrid} style={{ gridTemplateColumns: "repeat(3, 1fr)", marginTop: 16 }}>
+                <div className={cs.kpiCard}>
+                  <div className={cs.kpiLabel}>Total</div>
+                  <div className={cs.kpiValue}>{preparation.total_items}</div>
+                </div>
+                <div className={cs.kpiCard}>
+                  <div className={cs.kpiLabel}>Already Exist</div>
+                  <div className={cs.kpiValue} style={{ color: "var(--accent-green)" }}>{preparation.existing}</div>
+                </div>
+                <div className={cs.kpiCard}>
+                  <div className={cs.kpiLabel}>To Create</div>
+                  <div className={cs.kpiValue} style={{ color: "var(--accent-orange)" }}>{preparation.to_create}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Logs */}
+            {logs.length > 0 && (
+              <div
+                ref={logRef}
+                style={{
+                  marginTop: 16,
+                  background: "var(--bg-input)",
+                  border: "1px solid var(--border-default)",
+                  borderRadius: "var(--radius-sm)",
+                  padding: 14,
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "0.78rem",
+                  maxHeight: 400,
+                  overflow: "auto",
+                  lineHeight: 1.7,
+                }}
+              >
+                {logs.map((entry, i) => (
+                  <div key={i} style={{ color: logColors[entry.type] }}>
+                    <span style={{ color: "var(--text-muted)" }}>{entry.time}</span>{" "}
+                    {entry.msg}
                   </div>
                 ))}
-              </div>
-            )}
-
-            {txHash && (
-              <div style={{ marginTop: 16, padding: 12, background: "var(--accent-green-bg)", borderRadius: "var(--radius-sm)", fontSize: "0.85rem" }}>
-                TX:{" "}
-                <a href={`${EXPLORER_URL}/tx/${txHash}`} target="_blank" rel="noopener noreferrer" className={cs.mono}>
-                  {txHash}
-                </a>
-              </div>
-            )}
-
-            {error && (
-              <div style={{ marginTop: 16, padding: 12, background: "var(--accent-red-bg)", borderRadius: "var(--radius-sm)", fontSize: "0.85rem", color: "var(--accent-red)" }}>
-                {error}
-              </div>
-            )}
-
-            {logs.length > 0 && (
-              <div style={{ marginTop: 16, background: "var(--bg-input)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)", padding: 12, fontFamily: "var(--font-mono)", fontSize: "0.75rem", maxHeight: 200, overflow: "auto", color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>
-                {logs.join("\n")}
               </div>
             )}
           </>
